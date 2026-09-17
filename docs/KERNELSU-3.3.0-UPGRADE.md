@@ -1,20 +1,33 @@
 # KernelSU v3.3.0 upgrade
 
-**Status: rebased and verified as far as this machine allows; not compiled, not device-tested.**
+**Status: rebased, compiles in CI on both halves, not device-tested.**
 
 The Samsung patch has been re-derived against the `v3.3.0` tag, the five conflicting hunks resolved by
-hand, and the result checked against a pristine checkout. It has **not** been through a compiler here:
+hand, and the result compiled by [`../.github/workflows/ksu-build.yml`](../.github/workflows/ksu-build.yml)
+— which exists because this could not be done on the machine the rebase was prepared on: the module
+needs a DDK container and `ksud` needs `libclang` for bindgen, and a Windows box with an Android NDK has
+neither (the NDK ships `clang.exe` but not the libclang shared library).
 
-- the kernel module needs the DDK container from [`../kernelsu/README.md`](../kernelsu/README.md), and
-  there is no Docker daemon on this machine (confirmed by `docker info`);
-- `cargo check` for `aarch64-linux-android` gets all the way to `ksud`'s own build script and stops
-  there, because bindgen needs a `libclang.dll` this machine does not have — not in either installed
-  NDK, and nothing else on the box provides one.
+That workflow ran green on 2026-09-17 (run `35191872949`):
 
-The published 3.2.5 pairs in [`../kernelsu/`](../kernelsu/) remain the device-tested ones. Everything
-below is *the delta to carry forward*, not an artifact to publish.
+| job | result |
+| --- | --- |
+| module `android15-6.6`, patch-text | success — `vermagic: 6.6.127-4k-g46a034eca005-dirty SMP preempt mod_unload modversions aarch64` |
+| module `android15-6.6`, no-patch-text | success |
+| module `android14-6.1`, patch-text | success |
+| module `android14-6.1`, no-patch-text | success |
+| `ksud` `v3.3.0` | success — aarch64 ELF, 4,982,256 bytes, stamped `3.3.0` (not the `0.0.0` fallback) |
 
-Verified on this machine:
+So the kernel half compiles for both KMIs in both text-patching modes, and the Rust half compiles. The
+`no-patch-text` legs are what verify the `patch_memory.c` guard resolution, and the `ksud` job is what
+verifies the `install`/`finish_install` split on upstream's new signature.
+
+**What that does not establish.** These are compile checks, not artifacts: the modules carry the DDK's
+own `6.6.127-…-dirty` release instead of a target's, so none of them is installable, and nothing here has
+been near a phone. The published 3.2.5 pairs in [`../kernelsu/`](../kernelsu/) remain the device-tested
+ones; the validation section below is still owed before any of this ships.
+
+Also verified while preparing it:
 
 | claim | how |
 | --- | --- |
@@ -193,19 +206,21 @@ and traps:
 3. **Substitute the exact target release, as before.** The DDK's own `kernel.release` is not the target's;
    the module must report the target's exact `UTS_RELEASE` or `modprobe`'s version check refuses it.
 4. **`ksud` needs an AArch64 assembler and libclang.** Two build-script dependencies that are easy to
-   miss, both observed here:
+   miss; the workflow handles both, and they are why a plain local build fails:
    - `userspace/ksud/build.rs` assembles `src/lkm_image_bootstrap.S` at build time and looks for
      `aarch64-linux-gnu-gcc`, `clang`, or `llvm-mc` on `PATH` — or takes `KSU_LKM_BOOTSTRAP_OBJECT` /
      `KSU_LKM_BOOTSTRAP_CC`. Putting the NDK's `llvm/prebuilt/<host>/bin` on `PATH` satisfies it.
    - bindgen needs `LIBCLANG_PATH` pointing at a directory containing `libclang.dll` (or `libclang.so`).
-     **Neither installed NDK ships one on Windows** — Android Studio's NDK provides `clang.exe`,
-     `llvm-ar`, `llvm-mc`, but not the libclang shared library. A full LLVM install, or the CI Linux
-     image, is what supplies it.
-5. **Build inside the git checkout, with the tags present.** `build.rs` derives `VERSION_CODE` from
-   `git describe`; outside a repo it warns and falls back to **`VERSION_CODE=0`, `VERSION_NAME=0.0.0`**.
-   A `ksud` stamped `0` would misreport itself to the manager, which is exactly the pairing this upgrade
-   is about. The rebase trees used here are not git checkouts, so the numbers seen during checking were
-   the fallback, not a real build's.
+     **Neither installed NDK ships one on Windows** — it provides `clang.exe`, `llvm-ar` and `llvm-mc`,
+     but not the libclang shared library. On CI, `apt-get install libclang-dev` plus
+     `llvm-config --libdir` supplies it.
+5. **Build inside the git checkout, with tags fetched.** `build.rs` derives `VERSION_CODE` from
+   `git describe`; outside a repo — or in a shallow, tagless clone — it warns and falls back to
+   **`VERSION_CODE=0`, `VERSION_NAME=0.0.0`**. A `ksud` stamped `0` would misreport itself to the
+   manager, which is exactly the pairing this upgrade is about. The workflow therefore checks KernelSU
+   out with `fetch-depth: 0` and `fetch-tags: true`, and logs `git describe`; the run above reported
+   `v3.3.0` and the binary carries `3.3.0`. The local rebase trees are not git checkouts, so the numbers
+   seen there were the fallback, not a real build's.
 
 Then, per profile, in the order the README already sets out: build the module, run `kernel/check_symbol`
 against the recovered target `vmlinux` (zero missing symbols; a manual relocation audit expects *every*

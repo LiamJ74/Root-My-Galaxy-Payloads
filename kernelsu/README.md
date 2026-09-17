@@ -1,5 +1,12 @@
 # Samsung KernelSU late-load builds
 
+## Contents
+
+| Version | Patch | State |
+| --- | --- | --- |
+| `v3.2.5` (`b0bc817b4e966aa6aa830834eaf6ef765d821d40`) | [`patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch`](patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch) | **The published pairs below.** Device-tested across nine profiles. |
+| `v3.3.0` (`932014a`) | [`patches/KernelSU-v3.3.0-samsung-kdp-rkp-defex.patch`](patches/KernelSU-v3.3.0-samsung-kdp-rkp-defex.patch) | Rebased and compiling in CI; **not published and not device-tested.** See [`../docs/KERNELSU-3.3.0-UPGRADE.md`](../docs/KERNELSU-3.3.0-UPGRADE.md) before using it — it records the five conflicts and how each was resolved, the `Kernel-SU` → `KernelSU2` dependency migration this upgrade now requires, and what is still owed. |
+
 The files in this directory are built from KernelSU `v3.2.5`, commit
 `b0bc817b4e966aa6aa830834eaf6ef765d821d40`. They are not interchangeable
 between KMIs.
@@ -157,6 +164,19 @@ Apply the patch to a clean v3.2.5 checkout:
 git checkout v3.2.5
 git apply KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch
 ```
+
+For `v3.3.0`, apply that tag's patch instead — and first repoint the dependencies, because the
+`Kernel-SU` organisation is suspended and `cargo` cannot resolve them as the tag ships:
+
+```sh
+git checkout v3.3.0
+sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' \
+  Cargo.toml Cargo.lock userspace/ksud/Cargo.toml userspace/ksuinit/Cargo.toml
+git apply KernelSU-v3.3.0-samsung-kdp-rkp-defex.patch
+```
+
+[`.github/workflows/ksu-build.yml`](../.github/workflows/ksu-build.yml) does exactly this for both
+halves of the patch and is the shortest way to get a compile without a local DDK container.
 
 For the Samsung 6.1 module, use DDK image
 `ghcr.io/ylarod/ddk-min:android14-6.1-20260313` and set:
