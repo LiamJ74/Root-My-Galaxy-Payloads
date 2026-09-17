@@ -147,7 +147,26 @@ jobs:
 
       - name: Cargo config for the NDK
         run: |
-          python3 KernelSU/scripts/setup_cargo_config.py --ndk-root "$ANDROID_NDK_HOME" --force
+          if [ -f KernelSU/scripts/setup_cargo_config.py ]; then
+            python3 KernelSU/scripts/setup_cargo_config.py --ndk-root "$ANDROID_NDK_HOME" --force
+          else
+            # KernelSU-Next carries neither that script nor a `.cargo/` template, so the config it
+            # would have generated is written here instead. Pinned to the NDK this workflow
+            # downloads: linux-x86_64 host, API 26. Only the aarch64 target is configured because
+            # that is the only one either flavour is built for.
+            ndk="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+            mkdir -p KernelSU/.cargo
+            cat > KernelSU/.cargo/config.toml <<EOF
+          [target.aarch64-linux-android]
+          linker = "$ndk/bin/aarch64-linux-android26-clang"
+
+          [env]
+          CC_aarch64_linux_android = "$ndk/bin/aarch64-linux-android26-clang"
+          CXX_aarch64_linux_android = "$ndk/bin/aarch64-linux-android26-clang++"
+          AR_aarch64_linux_android = "$ndk/bin/llvm-ar"
+          BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = "--sysroot=$ndk/sysroot -I$ndk/sysroot/usr/include/aarch64-linux-android"
+          EOF
+          fi
           cat KernelSU/.cargo/config.toml
 
       - name: Build ksud
@@ -438,7 +457,24 @@ jobs:
           echo "LIBCLANG_PATH=$clanglib" >> "$GITHUB_ENV"
 
       - name: Cargo config for the NDK
-        run: python3 KernelSU/scripts/setup_cargo_config.py --ndk-root "$ANDROID_NDK_HOME" --force
+        run: |
+          if [ -f KernelSU/scripts/setup_cargo_config.py ]; then
+            python3 KernelSU/scripts/setup_cargo_config.py --ndk-root "$ANDROID_NDK_HOME" --force
+          else
+            # See the note in the compile-check job: KernelSU-Next has no such script.
+            ndk="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+            mkdir -p KernelSU/.cargo
+            cat > KernelSU/.cargo/config.toml <<EOF
+          [target.aarch64-linux-android]
+          linker = "$ndk/bin/aarch64-linux-android26-clang"
+
+          [env]
+          CC_aarch64_linux_android = "$ndk/bin/aarch64-linux-android26-clang"
+          CXX_aarch64_linux_android = "$ndk/bin/aarch64-linux-android26-clang++"
+          AR_aarch64_linux_android = "$ndk/bin/llvm-ar"
+          BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = "--sysroot=$ndk/sysroot -I$ndk/sysroot/usr/include/aarch64-linux-android"
+          EOF
+          fi
 
       - name: Build the daemon around it
         env:
