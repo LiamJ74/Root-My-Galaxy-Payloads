@@ -1,6 +1,6 @@
 # KernelSU v3.3.0 upgrade
 
-**Status: rebased, compiles in CI on both halves, not device-tested.**
+**Status: rebased, compiles in CI on both halves, a pair published for one target, not device-tested.**
 
 The Samsung patch has been re-derived against the `v3.3.0` tag, the five conflicting hunks resolved by
 hand, and the result compiled by [`../.github/workflows/ksu-build.yml`](../.github/workflows/ksu-build.yml)
@@ -257,6 +257,52 @@ private const val KERNEL_SU_MANAGER_URL =
 
 Changed **last**, when a 3.3.0 module is actually published: the app hands that URL to the user, and a
 manager newer than the module is the direction that goes wrong.
+
+## One target pair, published for testing
+
+The workflow's `pair` jobs turn the rebase into something a device can actually be offered, for one
+target at a time. The first one is published, for a **SM-S938U1 on `S938U1UESCCZF9`**:
+
+| File | Size | Note |
+| --- | --- | --- |
+| `kernelsu/android15-6.6_kernelsu-pa3q-S938USQSCCZF9-kdp.ko` | 334,184 | vermagic `6.6.98-android15-8-pd6ff1cd-abogkiS938USQSCCZF9-4k SMP preempt mod_unload modversions aarch64` — the device's own, asserted in CI rather than assumed |
+| `kernelsu/ksud-pa3q-S938USQSCCZF9-kdp` | 5,095,160 | embeds the module above as its `android15-6.6_kernelsu.ko` asset |
+
+and a feed entry `pa3q-S938USQSCCZF9-ksu330` in [`../support/targets-v3.json`](../support/targets-v3.json)
+offers it. The entry reuses the exploit the working S25 entry uses, so **KernelSU is the only variable**
+between a normal run and this one, and the `kernelsu` URL is pinned to the commit carrying the pair
+rather than to `main`.
+
+**The symbol audit was not run.** `kernel/check_symbol` and the relocation audit want the target's
+recovered `vmlinux`, which is not in this repository. What ran instead is a diff of the module's
+undefined imports against the module that is already device-tested on this same kernel build, which
+reported exactly one added name:
+
+```
+tracepoint_probe_register_prio
+```
+
+from upstream's `kernel: register tracepoint handler with minimum priority` (#3582). The tested module
+already resolves `tracepoint_probe_register` and `tracepoint_probe_unregister` from the same corner of
+the kernel, so this is very likely present — but "very likely" is the honest word, and it is the first
+thing to check if a late-load refuses. `/proc/kallsyms` on Android 16 is unreadable without root, so it
+cannot be confirmed before the run; it can be confirmed *during* one, since the loader runs as root.
+
+### Testing it
+
+1. Install the matching manager. A 3.3.0 module pairs with the 3.3.0 manager — `KernelSU_v3.3.0_32601-release.apk`
+   from the `v3.3.0` release — because #3613/#3628 changed how the module parses the manager's signing
+   block. Keep the 3.2.5 manager APK: going back to the tested pair means going back to both halves.
+2. In the app, add a payload source for `rushiranpise/Root-My-Galaxy-Payloads` and pin it to commit
+   `eb54d32`, so the feed is read from the commit that offers this entry.
+3. Start a run and pick **Galaxy S25 Ultra | KernelSU 3.3.0 (test)** in the payload sheet. Both this and
+   the S25 series entry match the device; that is the point — they are alternatives, and this one is the
+   untested one.
+4. Read the outcome in the run's own log. If late-load refuses on a symbol, the name it names is either
+   the one above or something `check_symbol` would have caught.
+
+Nothing here is flashed: KernelSU is late-loaded into the running kernel, so a reboot returns the phone
+to stock and unrooted. That is what makes trying it reversible.
 
 ## Deliberate non-goals
 

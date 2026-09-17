@@ -5,7 +5,7 @@
 | Version | Patch | State |
 | --- | --- | --- |
 | `v3.2.5` (`b0bc817b4e966aa6aa830834eaf6ef765d821d40`) | [`patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch`](patches/KernelSU-v3.2.5-samsung-kdp-rkp-defex.patch) | **The published pairs below.** Device-tested across nine profiles. |
-| `v3.3.0` (`932014a`) | [`patches/KernelSU-v3.3.0-samsung-kdp-rkp-defex.patch`](patches/KernelSU-v3.3.0-samsung-kdp-rkp-defex.patch) | Rebased and compiling in CI; **not published and not device-tested.** See [`../docs/KERNELSU-3.3.0-UPGRADE.md`](../docs/KERNELSU-3.3.0-UPGRADE.md) before using it — it records the five conflicts and how each was resolved, the `Kernel-SU` → `KernelSU2` dependency migration this upgrade now requires, and what is still owed. |
+| `v3.3.0` (`932014a`) | [`patches/KernelSU-v3.3.0-samsung-kdp-rkp-defex.patch`](patches/KernelSU-v3.3.0-samsung-kdp-rkp-defex.patch) | Rebased, compiling in CI, and built for one target — see `android15-6.6_kernelsu-pa3q-S938USQSCCZF9-kdp.ko` and `ksud-pa3q-S938USQSCCZF9-kdp`, which are **published for testing and not device-confirmed.** See [`../docs/KERNELSU-3.3.0-UPGRADE.md`](../docs/KERNELSU-3.3.0-UPGRADE.md) before using it — it records the five conflicts and how each was resolved, the `Kernel-SU` → `KernelSU2` dependency migration this upgrade now requires, and what is still owed. |
 
 The files in this directory are built from KernelSU `v3.2.5`, commit
 `b0bc817b4e966aa6aa830834eaf6ef765d821d40`. They are not interchangeable
