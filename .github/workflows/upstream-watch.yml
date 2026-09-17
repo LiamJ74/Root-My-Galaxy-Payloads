@@ -208,8 +208,13 @@ jobs:
             cp /tmp/moved.json /tmp/matrix.json
           fi
 
-          python3 -c "import json;print(json.dumps(json.load(open('/tmp/matrix.json')),indent=1))"
-          echo "pairs=$(cat /tmp/matrix.json)" >> "$GITHUB_OUTPUT"
+          # A multi-line value has to be written in the delimited form: the file command parser
+          # reads one NAME=value per line, and a JSON array is not that.
+          {
+            echo 'pairs<<MATRIX'
+            cat /tmp/matrix.json
+            echo 'MATRIX'
+          } >> "$GITHUB_OUTPUT"
           echo "count=$(python3 -c 'import json;print(len(json.load(open("/tmp/matrix.json"))))')" >> "$GITHUB_OUTPUT"
 
       - name: What this run does not rebuild
@@ -220,7 +225,8 @@ jobs:
   # One build per pair, each of which publishes what it built.
   # ---------------------------------------------------------------------------------------------
   rebuild:
-    name: ${{ matrix.pair.flavor }} ${{ matrix.pair.targetId }}
+    # Named for the pair it builds, which is what the run list shows beside this.
+    name: rebuild
     needs: [detect, plan]
     if: needs.plan.outputs.count != '0'
     strategy:
