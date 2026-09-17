@@ -15,8 +15,16 @@ name: KernelSU
 on:
   workflow_dispatch:
     inputs:
+      flavor:
+        description: 'Which flavour to build'
+        required: true
+        type: choice
+        options:
+          - kernelsu
+          - kernelsu-next
+        default: kernelsu
       ksu_ref:
-        description: 'KernelSU tag to build (needs a matching kernelsu/patches/KernelSU-<ref>-*.patch)'
+        description: 'Tag to build (needs a matching kernelsu/patches/<name>-<ref>-*.patch)'
         required: true
         default: 'v3.3.0'
       ddk_release:
@@ -53,8 +61,16 @@ permissions:
   contents: read
 
 env:
+  FLAVOR: ${{ github.event.inputs.flavor || 'kernelsu' }}
+  # The two flavours live in different repositories and their tags only happen to share a name, so
+  # the repository, the patch and the artifact names all follow the flavour rather than being fixed.
+  FLAVOR_REPO: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next/KernelSU-Next' || 'tiann/KernelSU' }}
+  FLAVOR_PATCH: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next' || 'KernelSU' }}
+  # Distinguishes the files this flavour publishes from the other flavour's, so both can be served
+  # for one target without either clobbering the other.
+  FLAVOR_SUFFIX: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && '-next' || '' }}
   KSU_REF: ${{ github.event.inputs.ksu_ref || 'v3.3.0' }}
-  PATCH: kernelsu/patches/KernelSU-${{ github.event.inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
+  PATCH: kernelsu/patches/${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next' || 'KernelSU' }}-${{ github.event.inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
 
 jobs:
   # ---------------------------------------------------------------------------------------------
@@ -62,7 +78,7 @@ jobs:
   # `install`/`finish_install` split or a stale import shows up.
   # ---------------------------------------------------------------------------------------------
   ksud:
-    name: ksud (${{ github.event.inputs.ksu_ref || 'v3.3.0' }})
+    name: ksud (${{ env.FLAVOR }}, ${{ github.event.inputs.ksu_ref || 'v3.3.0' }})
     runs-on: ubuntu-latest
     steps:
       - name: Checkout payloads
@@ -81,7 +97,7 @@ jobs:
       - name: Checkout KernelSU
         uses: actions/checkout@v7
         with:
-          repository: tiann/KernelSU
+          repository: ${{ env.FLAVOR_REPO }}
           ref: ${{ env.KSU_REF }}
           path: KernelSU
           # `ksud`'s build script derives VERSION_CODE from `git describe`. A shallow, tagless clone
@@ -91,16 +107,19 @@ jobs:
 
       - name: Point the suspended Kernel-SU dependencies at KernelSU2
         run: |
-          # The `Kernel-SU` organisation is suspended, so four git dependencies 404. Upstream's own
+          # The `Kernel-SU` organisation is suspended, so its git dependencies 404. Upstream's own
           # fix is tiann/KernelSU#3723, which repoints them at the successor org `KernelSU2`. The
           # revs are deliberately *not* bumped here: the lockfile's revs are the ones this tag and
           # this patch are consistent with (main pins a different ksu_props).
+          #
+          # Both flavours need this, and they lay their manifests out differently - KernelSU has one
+          # workspace lockfile at its root, KernelSU-Next has one per crate - so find them rather
+          # than naming them.
           cd KernelSU
-          before=$(grep -rl 'github.com/Kernel-SU/' Cargo.toml Cargo.lock userspace/ksud/Cargo.toml userspace/ksuinit/Cargo.toml 2>/dev/null | wc -l)
-          sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' \
-            Cargo.toml Cargo.lock userspace/ksud/Cargo.toml userspace/ksuinit/Cargo.toml
-          echo "files rewritten: $before"
-          grep -rn 'github.com/Kernel-SU/' . --include=Cargo.toml --include=Cargo.lock | grep -v '^\./target' || echo "no Kernel-SU references left"
+          mapfile -t manifests < <(find . -name Cargo.toml -o -name Cargo.lock | grep -v '/target/')
+          echo "manifests: ${#manifests[@]}"
+          sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' "${manifests[@]}"
+          grep -rn 'github.com/Kernel-SU/' "${manifests[@]}" || echo "no Kernel-SU references left"
 
       - name: Apply the Samsung patch
         run: git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
@@ -159,7 +178,7 @@ jobs:
   # rebase has to re-place by hand.
   # ---------------------------------------------------------------------------------------------
   module:
-    name: module (${{ matrix.kmi }}, ${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }})
+    name: module (${{ env.FLAVOR }}, ${{ matrix.kmi }}, ${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -184,7 +203,7 @@ jobs:
       - name: Checkout KernelSU
         uses: actions/checkout@v7
         with:
-          repository: tiann/KernelSU
+          repository: ${{ env.FLAVOR_REPO }}
           ref: ${{ env.KSU_REF }}
           path: KernelSU
 
@@ -232,7 +251,7 @@ jobs:
   # the import diff below, against the module that is already device-tested on the same kernel build.
   # ---------------------------------------------------------------------------------------------
   pair-module:
-    name: pair module (${{ github.event.inputs.target_id }})
+    name: pair module (${{ env.FLAVOR }}, ${{ github.event.inputs.target_id }})
     # The event name has to be part of this: on a push there are no inputs, and `null != ''` is true,
     # which would otherwise run the pair with an empty target.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.target_release != ''
@@ -255,7 +274,7 @@ jobs:
       - name: Checkout KernelSU
         uses: actions/checkout@v7
         with:
-          repository: tiann/KernelSU
+          repository: ${{ env.FLAVOR_REPO }}
           ref: ${{ env.KSU_REF }}
           path: KernelSU
 
@@ -339,8 +358,9 @@ jobs:
         env:
           TARGET_ID: ${{ github.event.inputs.target_id }}
           KMI: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}
+          SUFFIX: ${{ env.FLAVOR_SUFFIX }}
         run: |
-          out="${KMI}_kernelsu-${TARGET_ID}-kdp.ko"
+          out="${KMI}_kernelsu${SUFFIX}-${TARGET_ID}-kdp.ko"
           cp "KernelSU/kernel/kernelsu.ko" "$out"
           ls -l "$out"
           echo "size: $(stat -c %s "$out")"
@@ -349,14 +369,14 @@ jobs:
       - name: Upload the module
         uses: actions/upload-artifact@v7
         with:
-          name: pair-module-${{ github.event.inputs.target_id }}
+          name: pair-module-${{ env.FLAVOR }}-${{ github.event.inputs.target_id }}
           # Spelled out rather than read back from $GITHUB_ENV: the `env` context in an expression is
           # filled from `env:` keys, not from what a previous step exported.
-          path: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}_kernelsu-${{ github.event.inputs.target_id }}-kdp.ko
+          path: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}_kernelsu${{ env.FLAVOR_SUFFIX }}-${{ github.event.inputs.target_id }}-kdp.ko
           if-no-files-found: error
 
   pair-ksud:
-    name: pair ksud (${{ github.event.inputs.target_id }})
+    name: pair ksud (${{ env.FLAVOR }}, ${{ github.event.inputs.target_id }})
     needs: pair-module
     runs-on: ubuntu-latest
     steps:
@@ -366,7 +386,7 @@ jobs:
       - name: Checkout KernelSU
         uses: actions/checkout@v7
         with:
-          repository: tiann/KernelSU
+          repository: ${{ env.FLAVOR_REPO }}
           ref: ${{ env.KSU_REF }}
           path: KernelSU
           fetch-depth: 0
@@ -375,8 +395,9 @@ jobs:
       - name: Point the suspended Kernel-SU dependencies at KernelSU2
         run: |
           cd KernelSU
-          sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' \
-            Cargo.toml Cargo.lock userspace/ksud/Cargo.toml userspace/ksuinit/Cargo.toml
+          mapfile -t manifests < <(find . -name Cargo.toml -o -name Cargo.lock | grep -v '/target/')
+          echo "manifests: ${#manifests[@]}"
+          sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' "${manifests[@]}"
 
       - name: Apply the Samsung patch
         run: git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
@@ -394,7 +415,7 @@ jobs:
       - name: Download the module built for the target
         uses: actions/download-artifact@v7
         with:
-          name: pair-module-${{ github.event.inputs.target_id }}
+          name: pair-module-${{ env.FLAVOR }}-${{ github.event.inputs.target_id }}
           path: /tmp/pair
 
       - name: Rust target
@@ -434,8 +455,9 @@ jobs:
       - name: Name it the way the feed serves it
         env:
           TARGET_ID: ${{ github.event.inputs.target_id }}
+          SUFFIX: ${{ env.FLAVOR_SUFFIX }}
         run: |
-          out="ksud-${TARGET_ID}-kdp"
+          out="ksud${SUFFIX}-${TARGET_ID}-kdp"
           cp KernelSU/target/aarch64-linux-android/release/ksud "$out"
           ls -l "$out"
           # The size the feed entry has to carry.
@@ -445,6 +467,6 @@ jobs:
       - name: Upload the daemon
         uses: actions/upload-artifact@v7
         with:
-          name: pair-ksud-${{ github.event.inputs.target_id }}
-          path: ksud-${{ github.event.inputs.target_id }}-kdp
+          name: pair-ksud-${{ env.FLAVOR }}-${{ github.event.inputs.target_id }}
+          path: ksud${{ env.FLAVOR_SUFFIX }}-${{ github.event.inputs.target_id }}-kdp
           if-no-files-found: error
