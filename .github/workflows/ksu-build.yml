@@ -12,7 +12,59 @@ name: KernelSU
 # UTS_RELEASE rather than a target's, so it is a compile check, not an installable artifact. See
 # docs/KERNELSU-3.3.0-UPGRADE.md for what publishing one involves.
 
+# Callable as well as dispatchable: `upstream-watch.yml` runs this once per target when a new
+# KernelSU release makes every published pair need rebuilding, and the publish job below is what
+# turns a pair into a feed entry. The inputs are the same either way, which is why they are read
+# through the `inputs` context rather than the event's - on a call there is no event to read them
+# from, and on a push there are none, which is what keeps the pair jobs off.
 on:
+  workflow_call:
+    inputs:
+      publish:
+        description: 'Commit the pair into kernelsu/ and point the feed at it'
+        required: false
+        type: boolean
+        default: false
+      migrate:
+        description: 'Entries this run moves off a shared daemon, comma separated'
+        required: false
+        type: string
+        default: ''
+      flavor:
+        description: 'Which flavour to build'
+        required: false
+        type: string
+        default: 'kernelsu'
+      ksu_ref:
+        description: 'Tag to build (needs a matching kernelsu/patches/<name>-<ref>-*.patch)'
+        required: false
+        type: string
+        default: 'v3.3.0'
+      ddk_release:
+        description: 'DDK image release'
+        required: false
+        type: string
+        default: '20260828'
+      kmi:
+        description: 'KMIs for the kernel module, as a JSON array'
+        required: false
+        type: string
+        default: '["android15-6.6","android14-6.1"]'
+      target_id:
+        description: 'Target id for the publishable pair, e.g. pa3q-S938USQSCCZF9'
+        required: false
+        type: string
+        default: ''
+      target_release:
+        description: 'The target''s exact kernel release, as `uname -r` reports it'
+        required: false
+        type: string
+        default: ''
+      pair_kmi:
+        description: 'KMI for the pair build'
+        required: false
+        type: string
+        default: 'android15-6.6'
   workflow_dispatch:
     inputs:
       flavor:
@@ -50,6 +102,15 @@ on:
         description: 'KMI for the pair build'
         required: false
         default: 'android15-6.6'
+      publish:
+        description: 'Commit the pair into kernelsu/ and point the feed at it'
+        required: false
+        type: boolean
+        default: false
+      migrate:
+        description: 'Entries this run moves off a shared daemon, comma separated'
+        required: false
+        default: ''
   push:
     # Only what changes the build. Documentation edits used to re-run this too, pulling four DDK
     # images to recompile an identical module; prose about the build is not the build.
@@ -58,25 +119,27 @@ on:
       - '.github/workflows/ksu-build.yml'
 
 permissions:
-  contents: read
+  # Write, because a published pair is a commit: the module and the daemon into `kernelsu/`, and
+  # the feed entry that points at them. Everything else in this workflow only reads.
+  contents: write
 
 env:
-  FLAVOR: ${{ github.event.inputs.flavor || 'kernelsu' }}
+  FLAVOR: ${{ inputs.flavor || 'kernelsu' }}
   # The two flavours live in different repositories and their tags only happen to share a name, so
   # the repository, the patch and the artifact names all follow the flavour rather than being fixed.
-  FLAVOR_REPO: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next/KernelSU-Next' || 'tiann/KernelSU' }}
-  FLAVOR_PATCH: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next' || 'KernelSU' }}
+  FLAVOR_REPO: ${{ (inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next/KernelSU-Next' || 'tiann/KernelSU' }}
+  FLAVOR_PATCH: ${{ (inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next' || 'KernelSU' }}
   # Distinguishes the files this flavour publishes from the other flavour's, so both can be served
   # for one target without either clobbering the other.
-  FLAVOR_SUFFIX: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && '-next' || '' }}
-  KSU_REF: ${{ github.event.inputs.ksu_ref || 'v3.3.0' }}
-  PATCH: kernelsu/patches/${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next' || 'KernelSU' }}-${{ github.event.inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
+  FLAVOR_SUFFIX: ${{ (inputs.flavor || 'kernelsu') == 'kernelsu-next' && '-next' || '' }}
+  KSU_REF: ${{ inputs.ksu_ref || 'v3.3.0' }}
+  PATCH: kernelsu/patches/${{ (inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next' || 'KernelSU' }}-${{ inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
   # How `ksud` has to be asked for. KernelSU is one Cargo workspace at its root, so its package is
   # selected by name; KernelSU-Next has no workspace at all - `ksud` and `ksuinit` are separate
   # crates under `userspace/`, each with its own lockfile - and its own `build.sh` builds `ksud` by
   # manifest path. That also moves the binary: a workspace member lands in the root `target/`, a
   # standalone crate in its own, which is why the steps below locate it instead of naming it.
-  CARGO_ARGS: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && '--manifest-path userspace/ksud/Cargo.toml' || '-p ksud' }}
+  CARGO_ARGS: ${{ (inputs.flavor || 'kernelsu') == 'kernelsu-next' && '--manifest-path userspace/ksud/Cargo.toml' || '-p ksud' }}
 
 jobs:
   # ---------------------------------------------------------------------------------------------
@@ -84,7 +147,7 @@ jobs:
   # `install`/`finish_install` split or a stale import shows up.
   # ---------------------------------------------------------------------------------------------
   ksud:
-    name: ksud (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ github.event.inputs.ksu_ref || 'v3.3.0' }})
+    name: ksud (${{ inputs.flavor || 'kernelsu' }}, ${{ inputs.ksu_ref || 'v3.3.0' }})
     runs-on: ubuntu-latest
     steps:
       - name: Checkout payloads
@@ -206,15 +269,15 @@ jobs:
   # rebase has to re-place by hand.
   # ---------------------------------------------------------------------------------------------
   module:
-    name: module (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ matrix.kmi }}, ${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }})
+    name: module (${{ inputs.flavor || 'kernelsu' }}, ${{ matrix.kmi }}, ${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        kmi: ${{ fromJSON(github.event.inputs.kmi || '["android15-6.6","android14-6.1"]') }}
+        kmi: ${{ fromJSON(inputs.kmi || '["android15-6.6","android14-6.1"]') }}
         no_patch_text: [false, true]
     container:
-      image: ghcr.io/ylarod/ddk-min:${{ matrix.kmi }}-${{ github.event.inputs.ddk_release || '20260828' }}
+      image: ghcr.io/ylarod/ddk-min:${{ matrix.kmi }}-${{ inputs.ddk_release || '20260828' }}
       options: --privileged
     steps:
       - name: Checkout payloads
@@ -279,13 +342,14 @@ jobs:
   # the import diff below, against the module that is already device-tested on the same kernel build.
   # ---------------------------------------------------------------------------------------------
   pair-module:
-    name: pair module (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ github.event.inputs.target_id }})
-    # The event name has to be part of this: on a push there are no inputs, and `null != ''` is true,
-    # which would otherwise run the pair with an empty target.
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target_release != ''
+    name: pair module (${{ inputs.flavor || 'kernelsu' }}, ${{ inputs.target_id }})
+    # On a push there are no inputs at all, so this is the condition rather than the event name:
+    # `inputs` is empty there and the pair is skipped, which is the behaviour the event check used
+    # to provide, while a call and a dispatch both reach it with a target filled in.
+    if: inputs.target_release != ''
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/ylarod/ddk-min:${{ github.event.inputs.pair_kmi || 'android15-6.6' }}-${{ github.event.inputs.ddk_release || '20260828' }}
+      image: ghcr.io/ylarod/ddk-min:${{ inputs.pair_kmi || 'android15-6.6' }}-${{ inputs.ddk_release || '20260828' }}
       options: --privileged
     steps:
       - name: Checkout payloads
@@ -313,7 +377,7 @@ jobs:
 
       - name: Build for the target release
         env:
-          TARGET_RELEASE: ${{ github.event.inputs.target_release }}
+          TARGET_RELEASE: ${{ inputs.target_release }}
         run: |
           cd KernelSU/kernel
           : "${KDIR:?the DDK image is expected to set KDIR}"
@@ -349,8 +413,8 @@ jobs:
 
       - name: Diff the imports against the device-tested module
         env:
-          TARGET_ID: ${{ github.event.inputs.target_id }}
-          KMI: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}
+          TARGET_ID: ${{ inputs.target_id }}
+          KMI: ${{ inputs.pair_kmi || 'android15-6.6' }}
         run: |
           # The published 3.2.5 module for this kernel build is known to load on hardware. The 3.3.0
           # module's undefined imports are compared against it: anything new is a name the device's
@@ -384,8 +448,8 @@ jobs:
 
       - name: Name it the way the feed serves it
         env:
-          TARGET_ID: ${{ github.event.inputs.target_id }}
-          KMI: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}
+          TARGET_ID: ${{ inputs.target_id }}
+          KMI: ${{ inputs.pair_kmi || 'android15-6.6' }}
           SUFFIX: ${{ env.FLAVOR_SUFFIX }}
         run: |
           out="${KMI}_kernelsu${SUFFIX}-${TARGET_ID}-kdp.ko"
@@ -397,14 +461,14 @@ jobs:
       - name: Upload the module
         uses: actions/upload-artifact@v7
         with:
-          name: pair-module-${{ env.FLAVOR }}-${{ github.event.inputs.target_id }}
+          name: pair-module-${{ env.FLAVOR }}-${{ inputs.target_id }}
           # Spelled out rather than read back from $GITHUB_ENV: the `env` context in an expression is
           # filled from `env:` keys, not from what a previous step exported.
-          path: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}_kernelsu${{ env.FLAVOR_SUFFIX }}-${{ github.event.inputs.target_id }}-kdp.ko
+          path: ${{ inputs.pair_kmi || 'android15-6.6' }}_kernelsu${{ env.FLAVOR_SUFFIX }}-${{ inputs.target_id }}-kdp.ko
           if-no-files-found: error
 
   pair-ksud:
-    name: pair ksud (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ github.event.inputs.target_id }})
+    name: pair ksud (${{ inputs.flavor || 'kernelsu' }}, ${{ inputs.target_id }})
     needs: pair-module
     runs-on: ubuntu-latest
     steps:
@@ -432,7 +496,7 @@ jobs:
 
       - name: Show what the daemon already carries
         env:
-          KMI: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}
+          KMI: ${{ inputs.pair_kmi || 'android15-6.6' }}
         run: |
           # This is the step the compile-check job does not do, and the reason its `ksud` has nothing
           # to load: the daemon picks up `aarch64/<kmi>_kernelsu.ko` from its own assets at build time.
@@ -443,7 +507,7 @@ jobs:
       - name: Download the module built for the target
         uses: actions/download-artifact@v7
         with:
-          name: pair-module-${{ env.FLAVOR }}-${{ github.event.inputs.target_id }}
+          name: pair-module-${{ env.FLAVOR }}-${{ inputs.target_id }}
           path: /tmp/pair
 
       - name: Rust target
@@ -487,7 +551,7 @@ jobs:
 
       - name: Build the daemon around it
         env:
-          KMI: ${{ github.event.inputs.pair_kmi || 'android15-6.6' }}
+          KMI: ${{ inputs.pair_kmi || 'android15-6.6' }}
         run: |
           dest="KernelSU/userspace/ksud/bin/aarch64/${KMI}_kernelsu.ko"
           cp "$(ls /tmp/pair/*.ko)" "$dest"
@@ -499,7 +563,7 @@ jobs:
 
       - name: Name it the way the feed serves it
         env:
-          TARGET_ID: ${{ github.event.inputs.target_id }}
+          TARGET_ID: ${{ inputs.target_id }}
           SUFFIX: ${{ env.FLAVOR_SUFFIX }}
         run: |
           out="ksud${SUFFIX}-${TARGET_ID}-kdp"
@@ -512,6 +576,75 @@ jobs:
       - name: Upload the daemon
         uses: actions/upload-artifact@v7
         with:
-          name: pair-ksud-${{ env.FLAVOR }}-${{ github.event.inputs.target_id }}
-          path: ksud${{ env.FLAVOR_SUFFIX }}-${{ github.event.inputs.target_id }}-kdp
+          name: pair-ksud-${{ env.FLAVOR }}-${{ inputs.target_id }}
+          path: ksud${{ env.FLAVOR_SUFFIX }}-${{ inputs.target_id }}-kdp
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------------------------
+  # Publishing the pair, which is the step that used to be done by hand: the two files into
+  # `kernelsu/`, and the feed entry that serves them - its URL, its size, its digest, and the
+  # KernelSU version its payload id and display name carry.
+  #
+  # It is a commit rather than a release asset because that is what the app reads: the feed
+  # names a file in this repository, and the client pins the commit it read it at.
+  # ---------------------------------------------------------------------------------------------
+  publish:
+    name: publish (${{ inputs.flavor }}, ${{ inputs.target_id }})
+    needs: [pair-module, pair-ksud]
+    if: inputs.publish && inputs.target_release != '' && inputs.target_id != ''
+    runs-on: ubuntu-latest
+    # Every pair commits to the same branch, and two of these running at once would race between
+    # pulling and pushing. Nothing is lost by one waiting.
+    concurrency:
+      group: publish-feed
+      cancel-in-progress: false
+    steps:
+      - name: Checkout payloads
+        uses: actions/checkout@v7
+
+      - name: Collect the pair
+        uses: actions/download-artifact@v7
+        with:
+          pattern: pair-*-${{ env.FLAVOR }}-${{ inputs.target_id }}
+          # Too many artifacts matched would silently drop one, so this fails rather than publishes
+          # half a pair: the daemon is the half that loads the module.
+          merge-multiple: true
+          path: kernelsu
+
+      - name: Check both halves arrived
+        run: |
+          daemon="kernelsu/ksud${{ env.FLAVOR_SUFFIX }}-${{ inputs.target_id }}-kdp"
+          module="kernelsu/${{ inputs.pair_kmi }}_kernelsu${{ env.FLAVOR_SUFFIX }}-${{ inputs.target_id }}-kdp.ko"
+          ls -l kernelsu/ | tail -5
+          test -s "$daemon" || { echo "::error::no daemon at $daemon"; exit 1; }
+          test -s "$module" || { echo "::error::no module at $module"; exit 1; }
+          # The daemon has to carry the module, because that is what `late-load` loads.
+          python3 -c "import sys; d=open(sys.argv[1],'rb').read(); m=open(sys.argv[2],'rb').read(); print('module embedded:', m in d); sys.exit(0 if m in d else 1)" "$daemon" "$module"
+
+      - name: Point the feed at the pair
+        env:
+          MIGRATE: ${{ inputs.migrate }}
+        run: |
+          daemon="ksud${{ env.FLAVOR_SUFFIX }}-${{ inputs.target_id }}-kdp"
+          args=(--repo . --daemon "$daemon" --artifact "kernelsu/$daemon" --version "${{ env.KSU_REF }}"
+                --url-prefix "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}")
+          if [ -n "$MIGRATE" ]; then
+            args+=(--migrate)
+            for id in ${MIGRATE//,/ }; do args+=(--payload-id "$id"); done
+          fi
+          python3 tools/update_feed.py "${args[@]}"
+
+      - name: Commit
+        run: |
+          files="kernelsu support/targets-v3.json"
+          if git diff --quiet -- $files; then
+            echo "Nothing changed; the feed already serves this pair."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $files
+          git commit -q -m "build(payloads): publish the ${{ env.FLAVOR }} pair for ${{ inputs.target_id }}" \
+            -m "Built from ${{ env.KSU_REF }} by the ${{ github.workflow }} workflow."
+          git pull --rebase --autostash
+          git push

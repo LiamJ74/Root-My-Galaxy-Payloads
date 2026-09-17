@@ -1,0 +1,243 @@
+name: Upstream KernelSU
+
+# Keeps the published pairs current with the projects they are built from.
+#
+# A KernelSU release needs three things done, and this does all three without a person:
+#
+#   1. **A patch for the new tag.** The Samsung delta is carried as a patch keyed by tag, so a
+#      release nobody has rebased onto cannot build at all. This tries the newest patch for the
+#      flavour at the new tag: when the hunks still apply it commits the new patch, and when they
+#      do not it opens an issue carrying the rebase's own output and stops there.
+#   2. **A pair for every target the feed serves.** `tools/pairs.py` derives that list from the
+#      feed and the artifacts already published, so a device port is enough to have it rebuilt.
+#      Each pair is built by `ksu-build.yml`, which then publishes it.
+#   3. **The feed entry that serves it** - url, size, digest, and the KernelSU version its payload
+#      id and display name carry - which that workflow commits.
+#
+# Nothing is published until the rebase is clean. The patch is the one part of this that is not
+# mechanical, and it is what a reviewer should read when a release arrives.
+
+on:
+  schedule:
+    # Daily and off the hour: a release is not time-critical, and this way the DDK pulls do not
+    # contend with anything that runs on it.
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: 'Only this flavour, instead of both (kernelsu or kernelsu-next)'
+        required: false
+        type: string
+        default: ''
+      force:
+        description: 'Rebuild the pairs for the tag that is already patched'
+        required: false
+        type: boolean
+        default: false
+      targets:
+        description: 'Only these targets, comma separated (for a scoped run)'
+        required: false
+        type: string
+        default: ''
+      migrate:
+        description: 'Also move shared-daemon entries onto pairs of their own'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  # A rebased patch and a published pair are both commits.
+  contents: write
+  issues: write
+
+concurrency:
+  # Never two at once: they write to the branch the feed is read from, and a pair built against a
+  # tag a newer run has already moved past is a wasted DDK pull at best.
+  group: upstream-watch
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # Which flavour is behind, and can its patch be rebased?
+  # ---------------------------------------------------------------------------------------------
+  detect:
+    name: detect
+    runs-on: ubuntu-latest
+    outputs:
+      refs: ${{ steps.collect.outputs.refs }}
+      any: ${{ steps.collect.outputs.any }}
+    steps:
+      - name: Checkout payloads
+        uses: actions/checkout@v7
+
+      - name: Rebase every flavour that is behind
+        id: rebase
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ONLY: ${{ inputs.flavor }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -o pipefail
+          echo '{}' > /tmp/refs.json
+
+          for flavor in kernelsu kernelsu-next; do
+            if [ -n "$ONLY" ] && [ "$ONLY" != "$flavor" ]; then continue; fi
+            repo=$([ "$flavor" = "kernelsu-next" ] && echo KernelSU-Next/KernelSU-Next || echo tiann/KernelSU)
+            name=$([ "$flavor" = "kernelsu-next" ] && echo KernelSU-Next || echo KernelSU)
+
+            # The newest *release*, not the newest tag: an unreleased tag is a commit someone is
+            # still working on, and publishing a pair from it would be publishing a moving tree.
+            tag=$(gh release view --repo "$repo" --json tagName -q .tagName)
+            patch="kernelsu/patches/$name-$tag-samsung-kdp-rkp-defex.patch"
+            echo "::group::$flavor is on $tag"
+
+            if [ -f "$patch" ]; then
+              if [ "$FORCE" = "true" ]; then
+                # The patch stays as it is: it is the record of how the delta was reconciled
+                # with this tag, and regenerating it from the same tag would only rewrite that
+                # record. What `force` asks for is the pairs, for a tag that is already patched.
+                echo "$patch is already here; rebuilding the pairs against $tag."
+                python3 -c "import json,sys; d=json.load(open('/tmp/refs.json')); d[sys.argv[2]]=sys.argv[1]; json.dump(d,open('/tmp/refs.json','w'))" "$tag" "$flavor"
+              else
+                echo "$patch is already here; nothing to rebuild."
+              fi
+              echo "::endgroup::"
+              continue
+            fi
+
+            # The newest patch for this flavour is the delta as the tag that last worked had it.
+            previous=$(ls -1 kernelsu/patches/"$name"-v*-samsung-kdp-rkp-defex.patch 2>/dev/null | sort -V | tail -1 || true)
+            if [ -z "$previous" ]; then
+              echo "::error::no $name patch to carry forward"
+              echo "::endgroup::"
+              continue
+            fi
+            echo "Carrying $previous forward onto $tag"
+
+            rm -rf /tmp/ksu
+            git clone --quiet --filter=blob:none --no-checkout "https://github.com/$repo" /tmp/ksu
+            git -C /tmp/ksu checkout --quiet "refs/tags/$tag"
+
+            # Nothing else is touched before the patch is tried. The `Kernel-SU` organisation being
+            # suspended is a *build* problem - cargo cannot resolve those dependencies, and the
+            # build jobs repoint them at `KernelSU2` for that reason. It is deliberately not done
+            # here: the patch is a diff of the tag as the project published it, and a rewritten
+            # lockfile inside it would collide with the build's own rewrite.
+
+            if git -C /tmp/ksu apply --check "$PWD/$previous" 2>/tmp/rebase.log; then
+              git -C /tmp/ksu apply "$PWD/$previous"
+              git -C /tmp/ksu diff > "$patch.tmp"
+              mv "$patch.tmp" "$patch"
+              echo "Clean rebase: $previous applies to $tag unchanged."
+              python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open('/tmp/refs.json')); d[sys.argv[2]]=p; json.dump(d,open('/tmp/refs.json','w'))" "$tag" "$flavor"
+            else
+              echo "::warning::$previous does not apply to $tag"
+              python3 tools/rebase_issue.py --repo "$GITHUB_REPOSITORY" --flavor "$flavor" \
+                --tag "$tag" --upstream "$repo" --previous "$previous" --patch "$patch" \
+                --log /tmp/rebase.log
+            fi
+            echo "::endgroup::"
+          done
+
+          cat /tmp/refs.json
+
+      - name: Keep the rebased patches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "No patch was rebased."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add kernelsu/patches
+          git commit -q -m "build(ksu): rebase the Samsung patches onto the latest releases" \
+            -m "Each patch applies unchanged to the new tag; this records the same delta against it."
+          git pull --rebase --autostash
+          git push
+
+      - name: Collect
+        id: collect
+        run: |
+          refs=$(cat /tmp/refs.json)
+          echo "refs=$refs" >> "$GITHUB_OUTPUT"
+          count=$(python3 -c "import json;print(len(json.load(open('/tmp/refs.json'))))")
+          echo "any=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "$count flavour(s) with a ref to build: $refs"
+
+  # ---------------------------------------------------------------------------------------------
+  # What the feed serves, filtered to the flavours that moved.
+  # ---------------------------------------------------------------------------------------------
+  plan:
+    name: plan
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      pairs: ${{ steps.matrix.outputs.pairs }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - name: Checkout payloads
+        uses: actions/checkout@v7
+        with:
+          # The patch the detect job committed, which is what these pairs are built against.
+          ref: ${{ github.ref_name }}
+
+      - name: Derive the pairs
+        id: matrix
+        env:
+          MIGRATE: ${{ inputs.migrate }}
+          ONLY_TARGETS: ${{ inputs.targets }}
+        run: |
+          # Derived from the feed and the artifacts already published for it, so a device port that
+          # adds a pair is rebuilt here without anyone editing a list.
+          python3 tools/pairs.py --repo . --write /tmp/plan.json
+          python3 tools/pairs.py --repo . --matrix $([ "$MIGRATE" = "true" ] && echo --with-migrations || true) > /tmp/all.json
+
+          # Only the flavours that actually moved, and each pair carries the ref it is built from.
+          jq --argjson refs '${{ needs.detect.outputs.refs }}' \
+            '[.[] | select($refs[.flavor]) | . + {ksu_ref: $refs[.flavor]}]' /tmp/all.json > /tmp/moved.json
+
+          # A scoped run, for trying the chain on one target without rebuilding the rest.
+          if [ -n "$ONLY_TARGETS" ]; then
+            jq --arg wanted "$ONLY_TARGETS" \
+              '[.[] | select(.targetId as $id | ($wanted | split(",") | index($id)))]' \
+              /tmp/moved.json > /tmp/matrix.json
+          else
+            cp /tmp/moved.json /tmp/matrix.json
+          fi
+
+          python3 -c "import json;print(json.dumps(json.load(open('/tmp/matrix.json')),indent=1))"
+          echo "pairs=$(cat /tmp/matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "count=$(python3 -c 'import json;print(len(json.load(open("/tmp/matrix.json"))))')" >> "$GITHUB_OUTPUT"
+
+      - name: What this run does not rebuild
+        run: |
+          python3 tools/report_plan.py /tmp/plan.json >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------------------------
+  # One build per pair, each of which publishes what it built.
+  # ---------------------------------------------------------------------------------------------
+  rebuild:
+    name: ${{ matrix.pair.flavor }} ${{ matrix.pair.targetId }}
+    needs: [detect, plan]
+    if: needs.plan.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      # Two at a time keeps the DDK pulls moving; the publish job inside the called workflow
+      # serialises the feed commit itself, because every pair pushes to the same branch.
+      max-parallel: 2
+      matrix:
+        pair: ${{ fromJSON(needs.plan.outputs.pairs) }}
+    uses: ./.github/workflows/ksu-build.yml
+    with:
+      flavor: ${{ matrix.pair.flavor }}
+      ksu_ref: ${{ matrix.pair.ksu_ref }}
+      kmi: ${{ matrix.pair.kmi }}
+      target_id: ${{ matrix.pair.targetId }}
+      target_release: ${{ matrix.pair.release }}
+      pair_kmi: ${{ matrix.pair.kmi }}
+      publish: true
+      migrate: ${{ matrix.pair.migrate }}
+    secrets: inherit
