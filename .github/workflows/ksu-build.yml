@@ -71,6 +71,12 @@ env:
   FLAVOR_SUFFIX: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && '-next' || '' }}
   KSU_REF: ${{ github.event.inputs.ksu_ref || 'v3.3.0' }}
   PATCH: kernelsu/patches/${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && 'KernelSU-Next' || 'KernelSU' }}-${{ github.event.inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
+  # How `ksud` has to be asked for. KernelSU is one Cargo workspace at its root, so its package is
+  # selected by name; KernelSU-Next has no workspace at all - `ksud` and `ksuinit` are separate
+  # crates under `userspace/`, each with its own lockfile - and its own `build.sh` builds `ksud` by
+  # manifest path. That also moves the binary: a workspace member lands in the root `target/`, a
+  # standalone crate in its own, which is why the steps below locate it instead of naming it.
+  CARGO_ARGS: ${{ (github.event.inputs.flavor || 'kernelsu') == 'kernelsu-next' && '--manifest-path userspace/ksud/Cargo.toml' || '-p ksud' }}
 
 jobs:
   # ---------------------------------------------------------------------------------------------
@@ -175,20 +181,23 @@ jobs:
           # bootstrap with the first of `aarch64-linux-gnu-gcc`, `clang`, `llvm-mc` it finds.
           export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           cd KernelSU
-          cargo build --release --locked --target aarch64-linux-android -p ksud
+          cargo build --release --locked --target aarch64-linux-android $CARGO_ARGS
 
       - name: Report what was stamped
         run: |
           cd KernelSU
           echo "git describe: $(git describe --tags 2>/dev/null || echo '(none)')"
-          file target/aarch64-linux-android/release/ksud
-          ls -l target/aarch64-linux-android/release/ksud
+          binary=$(find . -type f -name ksud -path '*/aarch64-linux-android/release/*' | head -1)
+          echo "binary: $binary"
+          file "$binary"
+          ls -l "$binary"
 
       - name: Upload ksud
         uses: actions/upload-artifact@v7
         with:
-          name: ksud-${{ env.KSU_REF }}-aarch64
-          path: KernelSU/target/aarch64-linux-android/release/ksud
+          name: ksud-${{ env.FLAVOR }}-${{ env.KSU_REF }}-aarch64
+          # A glob, because where the binary lands is a property of the flavour's layout.
+          path: KernelSU/**/aarch64-linux-android/release/ksud
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------------------------
@@ -485,8 +494,8 @@ jobs:
           ls -l "$dest"
           export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           cd KernelSU
-          cargo build --release --locked --target aarch64-linux-android -p ksud
-          file target/aarch64-linux-android/release/ksud
+          cargo build --release --locked --target aarch64-linux-android $CARGO_ARGS
+          find . -type f -name ksud -path '*/aarch64-linux-android/release/*' -exec file {} \;
 
       - name: Name it the way the feed serves it
         env:
@@ -494,7 +503,7 @@ jobs:
           SUFFIX: ${{ env.FLAVOR_SUFFIX }}
         run: |
           out="ksud${SUFFIX}-${TARGET_ID}-kdp"
-          cp KernelSU/target/aarch64-linux-android/release/ksud "$out"
+          cp "$(find KernelSU -type f -name ksud -path '*/aarch64-linux-android/release/*' | head -1)" "$out"
           ls -l "$out"
           # The size the feed entry has to carry.
           echo "size: $(stat -c %s "$out")"
