@@ -28,9 +28,10 @@ on:
         required: true
         default: '["android15-6.6","android14-6.1"]'
   push:
+    # Only what changes the build. Documentation edits used to re-run this too, pulling four DDK
+    # images to recompile an identical module; prose about the build is not the build.
     paths:
       - 'kernelsu/patches/**'
-      - 'kernelsu/README.md'
       - '.github/workflows/ksu-build.yml'
 
 permissions:
