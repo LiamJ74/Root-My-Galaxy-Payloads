@@ -270,8 +270,14 @@ target at a time. The first one is published, for a **SM-S938U1 on `S938U1UESCCZ
 
 and a feed entry `pa3q-S938USQSCCZF9-ksu330` in [`../support/targets-v3.json`](../support/targets-v3.json)
 offers it. The entry reuses the exploit the working S25 entry uses, so **KernelSU is the only variable**
-between a normal run and this one, and the `kernelsu` URL is pinned to the commit carrying the pair
-rather than to `main`.
+between a normal run and this one.
+
+Artifact URLs must be written in the **mutable branch form** (`.../<repo>/main/<path>`). The app pins
+them itself: it accepts a URL that starts with the source's own `<repo>/<branch>/` prefix or with the
+built-in feed's, strips that prefix, and re-points the rest at the commit the source resolved to. A URL
+carrying a commit in place of the branch matches neither prefix and is refused with *"The artifact
+repository is not allowed"* — which is what happens if you try to make the feed reproducible by pinning
+the URL yourself. Pin the **source** (in the app) instead.
 
 **The symbol audit was not run.** `kernel/check_symbol` and the relocation audit want the target's
 recovered `vmlinux`, which is not in this repository. What ran instead is a diff of the module's
@@ -293,8 +299,10 @@ cannot be confirmed before the run; it can be confirmed *during* one, since the 
 1. Install the matching manager. A 3.3.0 module pairs with the 3.3.0 manager — `KernelSU_v3.3.0_32601-release.apk`
    from the `v3.3.0` release — because #3613/#3628 changed how the module parses the manager's signing
    block. Keep the 3.2.5 manager APK: going back to the tested pair means going back to both halves.
-2. In the app, add a payload source for `rushiranpise/Root-My-Galaxy-Payloads` and pin it to commit
-   `eb54d32`, so the feed is read from the commit that offers this entry.
+2. In the app, add a payload source for `rushiranpise/Root-My-Galaxy-Payloads`. Leaving it on `main` is
+   fine — the app resolves the branch once and pins every artifact to that commit for the run. Pinning
+   the source to a commit is also supported and is the stricter choice; pin it to `eb54d32` or later,
+   the range that carries this entry.
 3. Start a run and pick **Galaxy S25 Ultra | KernelSU 3.3.0 (test)** in the payload sheet. Both this and
    the S25 series entry match the device; that is the point — they are alternatives, and this one is the
    untested one.
