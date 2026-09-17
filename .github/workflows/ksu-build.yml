@@ -612,14 +612,19 @@ jobs:
           path: kernelsu
 
       - name: Check both halves arrived
+        env:
+          RELEASE: ${{ inputs.target_release }}
         run: |
           daemon="kernelsu/ksud${{ env.FLAVOR_SUFFIX }}-${{ inputs.target_id }}-kdp"
           module="kernelsu/${{ inputs.pair_kmi }}_kernelsu${{ env.FLAVOR_SUFFIX }}-${{ inputs.target_id }}-kdp.ko"
-          ls -l kernelsu/ | tail -5
           test -s "$daemon" || { echo "::error::no daemon at $daemon"; exit 1; }
           test -s "$module" || { echo "::error::no module at $module"; exit 1; }
-          # The daemon has to carry the module, because that is what `late-load` loads.
-          python3 -c "import sys; d=open(sys.argv[1],'rb').read(); m=open(sys.argv[2],'rb').read(); print('module embedded:', m in d); sys.exit(0 if m in d else 1)" "$daemon" "$module"
+          ls -l "$daemon" "$module"
+          # What is asserted here is what a device's loader will check, and nothing the build jobs
+          # have not already established. It is deliberately *not* asserted that the module appears
+          # verbatim inside the daemon: the daemon carries it as a build asset rather than as a
+          # blob, and the pairs that run on devices today do not contain it verbatim either.
+          python3 tools/verify_pair.py --module "$module" --daemon "$daemon" --release "$RELEASE"
 
       - name: Point the feed at the pair
         env:
