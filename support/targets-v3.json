@@ -345,6 +345,21 @@
         "url": "https://raw.githubusercontent.com/rushiranpise/Root-My-Galaxy-Payloads/main/kernelsu/ksud-pa3q-S938USQSCCZF9-kdp",
         "size": 5095160
       }
+    },
+    {
+      "payloadId": "pa3q-S938USQSCCZF9-ksun330",
+      "displayName": "Galaxy S25 Ultra | KernelSU-Next 3.3.0 (test)",
+      "models": ["SM-S938U1"],
+      "kernelVersions": ["6.6.98"],
+      "flavor": "kernelsu-next",
+      "exploit": {
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/artifacts/pa3q-S938NKSUACZF1/cve-2026-43499-app.so",
+        "size": 104128
+      },
+      "kernelsu": {
+        "url": "https://raw.githubusercontent.com/rushiranpise/Root-My-Galaxy-Payloads/main/kernelsu/ksud-next-pa3q-S938USQSCCZF9-kdp",
+        "size": 3851984
+      }
     }
   ]
 }
