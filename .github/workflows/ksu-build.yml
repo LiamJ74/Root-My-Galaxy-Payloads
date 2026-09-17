@@ -1,0 +1,204 @@
+name: KernelSU
+
+# Compiles the KernelSU half of the payloads: the kernel module and `ksud`, each with the Samsung
+# patch applied to the tag the patch names.
+#
+# This exists because a rebase cannot be checked on every machine it is prepared on. The module needs
+# a DDK container, and `ksud` needs `libclang` for bindgen and an AArch64 assembler for its LKM
+# bootstrap - none of which a Windows laptop with an Android NDK reliably has (the NDK ships
+# `clang.exe` but not the libclang shared library). A runner has all of it.
+#
+# It builds the patch, it does not publish anything. The module built here carries the DDK's own
+# UTS_RELEASE rather than a target's, so it is a compile check, not an installable artifact. See
+# docs/KERNELSU-3.3.0-UPGRADE.md for what publishing one involves.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_ref:
+        description: 'KernelSU tag to build (needs a matching kernelsu/patches/KernelSU-<ref>-*.patch)'
+        required: true
+        default: 'v3.3.0'
+      ddk_release:
+        description: 'DDK image release'
+        required: true
+        default: '20260828'
+      kmi:
+        description: 'KMIs for the kernel module, as a JSON array'
+        required: true
+        default: '["android15-6.6","android14-6.1"]'
+  push:
+    paths:
+      - 'kernelsu/patches/**'
+      - 'kernelsu/README.md'
+      - '.github/workflows/ksu-build.yml'
+
+permissions:
+  contents: read
+
+env:
+  KSU_REF: ${{ github.event.inputs.ksu_ref || 'v3.3.0' }}
+  PATCH: kernelsu/patches/KernelSU-${{ github.event.inputs.ksu_ref || 'v3.3.0' }}-samsung-kdp-rkp-defex.patch
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # `ksud`: the userspace half. The Rust edits live here, so this is where a bad merge of the
+  # `install`/`finish_install` split or a stale import shows up.
+  # ---------------------------------------------------------------------------------------------
+  ksud:
+    name: ksud (${{ github.event.inputs.ksu_ref || 'v3.3.0' }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout payloads
+        uses: actions/checkout@v7
+
+      - name: Check the patch exists for this ref
+        run: |
+          if [ ! -f "${{ env.PATCH }}" ]; then
+            echo "::error::No patch for ref ${{ env.KSU_REF }}: expected ${{ env.PATCH }}"
+            echo "Present patches:"
+            ls -1 kernelsu/patches/ || true
+            exit 1
+          fi
+          echo "Building against ${{ env.KSU_REF }} with ${{ env.PATCH }}"
+
+      - name: Checkout KernelSU
+        uses: actions/checkout@v7
+        with:
+          repository: tiann/KernelSU
+          ref: ${{ env.KSU_REF }}
+          path: KernelSU
+          # `ksud`'s build script derives VERSION_CODE from `git describe`. A shallow, tagless clone
+          # makes it warn and fall back to 0.0.0, which is not what a real build stamps.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Point the suspended Kernel-SU dependencies at KernelSU2
+        run: |
+          # The `Kernel-SU` organisation is suspended, so four git dependencies 404. Upstream's own
+          # fix is tiann/KernelSU#3723, which repoints them at the successor org `KernelSU2`. The
+          # revs are deliberately *not* bumped here: the lockfile's revs are the ones this tag and
+          # this patch are consistent with (main pins a different ksu_props).
+          cd KernelSU
+          before=$(grep -rl 'github.com/Kernel-SU/' Cargo.toml Cargo.lock userspace/ksud/Cargo.toml userspace/ksuinit/Cargo.toml 2>/dev/null | wc -l)
+          sed -i 's#github\.com/Kernel-SU/#github.com/KernelSU2/#g' \
+            Cargo.toml Cargo.lock userspace/ksud/Cargo.toml userspace/ksuinit/Cargo.toml
+          echo "files rewritten: $before"
+          grep -rn 'github.com/Kernel-SU/' . --include=Cargo.toml --include=Cargo.lock | grep -v '^\./target' || echo "no Kernel-SU references left"
+
+      - name: Apply the Samsung patch
+        run: git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
+
+      - name: Rust target
+        run: rustup target add aarch64-linux-android
+
+      - name: Android NDK
+        run: |
+          curl -sSLo /tmp/ndk.zip https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -q /tmp/ndk.zip -d /tmp
+          echo "ANDROID_NDK_HOME=/tmp/android-ndk-r28c" >> "$GITHUB_ENV"
+
+      - name: libclang for bindgen
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libclang-dev
+          # The runner already carries LLVM; ask it where, rather than guessing a version directory.
+          clanglib=$(llvm-config --libdir 2>/dev/null || true)
+          if [ -z "$clanglib" ] || [ ! -e "$clanglib/libclang.so" ]; then
+            clanglib=$(dirname "$(find /usr/lib/llvm-* -name 'libclang.so*' -printf '%p\n' 2>/dev/null | head -1)")
+          fi
+          echo "LIBCLANG_PATH=$clanglib" >> "$GITHUB_ENV"
+          echo "libclang: $clanglib"
+
+      - name: Cargo config for the NDK
+        run: |
+          python3 KernelSU/scripts/setup_cargo_config.py --ndk-root "$ANDROID_NDK_HOME" --force
+          cat KernelSU/.cargo/config.toml
+
+      - name: Build ksud
+        run: |
+          # The NDK's bin has to be on PATH: `ksud`'s build script assembles its AArch64 LKM
+          # bootstrap with the first of `aarch64-linux-gnu-gcc`, `clang`, `llvm-mc` it finds.
+          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          cd KernelSU
+          cargo build --release --locked --target aarch64-linux-android -p ksud
+
+      - name: Report what was stamped
+        run: |
+          cd KernelSU
+          echo "git describe: $(git describe --tags 2>/dev/null || echo '(none)')"
+          file target/aarch64-linux-android/release/ksud
+          ls -l target/aarch64-linux-android/release/ksud
+
+      - name: Upload ksud
+        uses: actions/upload-artifact@v7
+        with:
+          name: ksud-${{ env.KSU_REF }}-aarch64
+          path: KernelSU/target/aarch64-linux-android/release/ksud
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------------------------
+  # The kernel module. Built twice per KMI: with live text patching, and with
+  # CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT=y, because the no-patch-text guard is one of the hunks a
+  # rebase has to re-place by hand.
+  # ---------------------------------------------------------------------------------------------
+  module:
+    name: module (${{ matrix.kmi }}, ${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kmi: ${{ fromJSON(github.event.inputs.kmi || '["android15-6.6","android14-6.1"]') }}
+        no_patch_text: [false, true]
+    container:
+      image: ghcr.io/ylarod/ddk-min:${{ matrix.kmi }}-${{ github.event.inputs.ddk_release || '20260828' }}
+      options: --privileged
+    steps:
+      - name: Checkout payloads
+        uses: actions/checkout@v7
+
+      - name: Check the patch exists for this ref
+        run: |
+          if [ ! -f "${{ env.PATCH }}" ]; then
+            echo "::error::No patch for ref ${{ env.KSU_REF }}: expected ${{ env.PATCH }}"
+            ls -1 kernelsu/patches/ || true
+            exit 1
+          fi
+
+      - name: Checkout KernelSU
+        uses: actions/checkout@v7
+        with:
+          repository: tiann/KernelSU
+          ref: ${{ env.KSU_REF }}
+          path: KernelSU
+
+      - name: Apply the Samsung patch
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/KernelSU"
+          git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/${{ env.PATCH }}"
+
+      - name: Build kernelsu.ko
+        run: |
+          cd KernelSU/kernel
+          # The DDK's release is not a target's, so this module is a compile check, not something to
+          # install. Substituting the target release is a per-profile step - see kernelsu/README.md.
+          CONFIG_KSU=m \
+          CONFIG_KSU_SAMSUNG_KDP=y \
+          CONFIG_KSU_SAMSUNG_RKP=y \
+          CONFIG_KSU_SAMSUNG_DEFEX=y \
+          ${{ matrix.no_patch_text && 'CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT=y' || '' }} \
+          CC=clang make -j"$(nproc)"
+
+          echo "=== built ==="
+          ls -l kernelsu.ko
+          modinfo ./kernelsu.ko
+          # Keeps the symbol tables the manual-relocation loader needs.
+          llvm-strip -d kernelsu.ko
+          echo "after strip:"; ls -l kernelsu.ko
+
+      - name: Upload kernelsu.ko
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernelsu-${{ env.KSU_REF }}-${{ matrix.kmi }}-${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }}
+          path: KernelSU/kernel/kernelsu.ko
+          if-no-files-found: error
