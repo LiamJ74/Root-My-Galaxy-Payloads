@@ -78,7 +78,7 @@ jobs:
   # `install`/`finish_install` split or a stale import shows up.
   # ---------------------------------------------------------------------------------------------
   ksud:
-    name: ksud (${{ env.FLAVOR }}, ${{ github.event.inputs.ksu_ref || 'v3.3.0' }})
+    name: ksud (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ github.event.inputs.ksu_ref || 'v3.3.0' }})
     runs-on: ubuntu-latest
     steps:
       - name: Checkout payloads
@@ -178,7 +178,7 @@ jobs:
   # rebase has to re-place by hand.
   # ---------------------------------------------------------------------------------------------
   module:
-    name: module (${{ env.FLAVOR }}, ${{ matrix.kmi }}, ${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }})
+    name: module (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ matrix.kmi }}, ${{ matrix.no_patch_text && 'no-patch-text' || 'patch-text' }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -251,7 +251,7 @@ jobs:
   # the import diff below, against the module that is already device-tested on the same kernel build.
   # ---------------------------------------------------------------------------------------------
   pair-module:
-    name: pair module (${{ env.FLAVOR }}, ${{ github.event.inputs.target_id }})
+    name: pair module (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ github.event.inputs.target_id }})
     # The event name has to be part of this: on a push there are no inputs, and `null != ''` is true,
     # which would otherwise run the pair with an empty target.
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.target_release != ''
@@ -376,7 +376,7 @@ jobs:
           if-no-files-found: error
 
   pair-ksud:
-    name: pair ksud (${{ env.FLAVOR }}, ${{ github.event.inputs.target_id }})
+    name: pair ksud (${{ github.event.inputs.flavor || 'kernelsu' }}, ${{ github.event.inputs.target_id }})
     needs: pair-module
     runs-on: ubuntu-latest
     steps:
