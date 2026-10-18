@@ -1053,6 +1053,31 @@ index 6336a222..8ecb0730 100644
  }
  
  void __init ksu_app_profile_init(void)
+diff --git a/kernel/selinux/rules.c b/kernel/selinux/rules.c
+index 5b5c170c..c6cb492a 100644
+--- a/kernel/selinux/rules.c
++++ b/kernel/selinux/rules.c
+@@ -99,7 +99,19 @@ void apply_kernelsu_rules()
+     // Create unconstrained file type
+     ksu_type(db, KERNEL_SU_FILE, "file_type");
+     ksu_typeattribute(db, KERNEL_SU_FILE, "mlstrustedobject");
+-    ksu_allow(db, "domain", KERNEL_SU_FILE, ALL, ALL);
++    // Samsung fork: the daemon binary itself carries this label (ksud/restorecon.rs), and every
++    // domain that stages or launches it - including this fork's own app, in untrusted_app - needs to
++    // exec it. Upstream's blanket `allow domain ksu_file ALL ALL` grants write/setattr/unlink/relabel
++    // too, which a static policy scanner reads as a much bigger hole than "can run this binary"; the
++    // exec path only ever needs the permissions below. This does not remove the detectable signal
++    // that ksu_file is readable+executable from an unprivileged domain - that read is real and the
++    // daemon cannot launch without it - it only removes the permissions nothing here actually uses.
++    ksu_allow(db, "domain", KERNEL_SU_FILE, "file", "open");
++    ksu_allow(db, "domain", KERNEL_SU_FILE, "file", "read");
++    ksu_allow(db, "domain", KERNEL_SU_FILE, "file", "getattr");
++    ksu_allow(db, "domain", KERNEL_SU_FILE, "file", "execute");
++    ksu_allow(db, "domain", KERNEL_SU_FILE, "file", "execute_no_trans");
++    ksu_allow(db, "domain", KERNEL_SU_FILE, "file", "map");
+ 
+     // allow all!
+     ksu_allow(db, KERNEL_SU_DOMAIN, ALL, ALL, ALL);
 diff --git a/userspace/ksud/src/late_load.rs b/userspace/ksud/src/late_load.rs
 index 5381571f..1dc640d0 100644
 --- a/userspace/ksud/src/late_load.rs

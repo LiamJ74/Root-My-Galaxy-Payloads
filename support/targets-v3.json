@@ -169,6 +169,22 @@
       }
     },
     {
+      "payloadId": "q7q-F966BXXSBBZG3-ksun342-hardened",
+      "displayName": "Galaxy Z Fold 7 (SM-F966B) | KernelSU-Next 3.4.2 (hardened sepolicy, test)",
+      "models": ["SM-F966B"],
+      "kernelVersions": ["6.6.98"],
+      "flavor": "kernelsu-next",
+      "exploit": {
+        "url": "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/artifacts/q7q-F966BXXSBBZG3/cve-2026-43499-app.so",
+        "size": 125872
+      },
+      "kernelsu": {
+        "url": "https://raw.githubusercontent.com/LiamJ74/Root-My-Galaxy-Payloads/main/kernelsu/ksud-next-q7q-F966BXXSBBZG3-kdp-v342-hardened",
+        "size": 4463520,
+        "sha256": "7532f01092610e4b833c026c4cd9eba0833d56690d5eec45e3942b6989758725"
+      }
+    },
+    {
       "payloadId": "e3q-S928USQS6DZF2",
       "displayName": "Galaxy S24 Ultra | Kernel 6.1.145",
       "models": ["SM-S928U1", "SM-S928W"],
