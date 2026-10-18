@@ -138,7 +138,7 @@
     },
     {
       "payloadId": "q7q-F966BXXSBBZG3-ksun340",
-      "displayName": "Galaxy Z Fold 7 (SM-F966B) | KernelSU-Next (recommended, 3.4.0)",
+      "displayName": "Galaxy Z Fold 7 (SM-F966B) | KernelSU-Next 3.4.0 (stable fallback)",
       "models": ["SM-F966B"],
       "kernelVersions": ["6.6.98"],
       "flavor": "kernelsu-next",
@@ -154,7 +154,7 @@
     },
     {
       "payloadId": "q7q-F966BXXSBBZG3-ksun342",
-      "displayName": "Galaxy Z Fold 7 (SM-F966B) | KernelSU-Next 3.4.2 (test, unconfirmed)",
+      "displayName": "Galaxy Z Fold 7 (SM-F966B) | KernelSU-Next (recommended, 3.4.2)",
       "models": ["SM-F966B"],
       "kernelVersions": ["6.6.98"],
       "flavor": "kernelsu-next",
