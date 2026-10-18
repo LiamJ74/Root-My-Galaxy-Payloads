@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "generic": [
+    {
+      "flavor": "kernelsu",
+      "kmis": [
+        "android12-5.10",
+        "android13-5.15",
+        "android14-6.1",
+        "android15-6.6"
+      ],
+      "daemon": {
+        "url": "https://raw.githubusercontent.com/LiamJ74/Root-My-Galaxy-Payloads/main/kernelsu/ksud-generic-kdp",
+        "size": 5566824,
+        "sha256": "3487bde89b33043bd6aa09db68d21a6375aaa126e131fda53b6f6318327b0081",
+        "version": "3.3.1"
+      }
+    },
+    {
+      "flavor": "resukisu",
+      "kmis": [
+        "android12-5.10",
+        "android13-5.15",
+        "android14-6.1",
+        "android15-6.6"
+      ],
+      "daemon": {
+        "url": "https://raw.githubusercontent.com/LiamJ74/Root-My-Galaxy-Payloads/main/kernelsu/ksud-rsksu-generic-kdp",
+        "size": 4798280,
+        "sha256": "a1445e9217d5629831d626e85ded4100af3296149ce0cdc3e400611b299fbe44",
+        "version": "4.2.0-rc3"
+      }
+    },
+    {
+      "flavor": "kernelsu-next",
+      "kmis": [
+        "android12-5.10",
+        "android13-5.15",
+        "android14-6.1",
+        "android15-6.6"
+      ],
+      "daemon": {
+        "url": "https://raw.githubusercontent.com/LiamJ74/Root-My-Galaxy-Payloads/main/kernelsu/ksud-next-generic-kdp",
+        "size": 4717248,
+        "sha256": "679504dd4e104dc1a296ed4ec795b5a5f3e808c2bd345a7ecfa201b40f1dca1d",
+        "version": "3.4.2"
+      }
+    }
+  ]
+}
