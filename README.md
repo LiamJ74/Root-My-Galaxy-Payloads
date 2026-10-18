@@ -11,6 +11,27 @@ This repository contains the device-specific native side of
 
 It intentionally does not contain Android application source code.
 
+## This fork
+
+This is `LiamJ74/Root-My-Galaxy-Payloads`, a personal fork of
+[`rushiranpise/Root-My-Galaxy-Payloads`](https://github.com/rushiranpise/Root-My-Galaxy-Payloads)
+(itself a fork of the upstream above), kept in sync via regular `git merge`. It differs only in what
+it adds, never in what it changes:
+
+- **KernelSU-Next entries for the Galaxy Z Fold 7 `SM-F966B`** (`q7q-F966BXXSBBZG3-ksun330`/`-ksun340`/
+  `-ksun342`, see [`support/targets-v3.json`](support/targets-v3.json)), built and published from this
+  fork — not present in either upstream catalog.
+- Their `kernelsu` artifacts (`kernelsu/ksud-next-q7q-F966BXXSBBZG3-kdp*`) point at
+  `raw.githubusercontent.com/LiamJ74/Root-My-Galaxy-Payloads`, this repository, rather than the
+  official feed, since they are this fork's own local builds.
+- The Samsung patch is rebased onto each new KernelSU-Next release as it ships
+  ([`kernelsu/patches/KernelSU-Next-v3.3.0-...patch`](kernelsu/patches), `v3.4.0`, `v3.4.2`), ahead of
+  upstream's own rebase cadence.
+
+This repository is consumed as an **extra payload source** by the companion app
+(**Settings → Payload Management → Payload Sources**), alongside the official feed — it does not
+replace it.
+
 ## Supported payloads
 
 | Payload | Compatible models | Kernel version | Status |
